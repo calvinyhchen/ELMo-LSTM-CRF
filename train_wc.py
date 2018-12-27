@@ -61,6 +61,7 @@ if __name__ == "__main__":
     parser.add_argument('--eva_matrix', choices=['a', 'fa'], default='fa', help='use f1 and accuracy or accuracy alone')
     parser.add_argument('--least_iters', type=int, default=50, help='at least train how many epochs before stop')
     parser.add_argument('--shrink_embedding', action='store_true', help='shrink the embedding dictionary to corpus (open this if pre-trained embedding dictionary is too large, but disable this may yield better results on external corpus)')
+    parser.add_argument('--elmo_embedding', action='store_true', help='use elmo embedding')
     args = parser.parse_args()
 
     if args.gpu >= 0:
@@ -98,7 +99,7 @@ if __name__ == "__main__":
 
         # converting format
         train_features, train_labels, f_map, l_map, c_map = utils.generate_corpus_char(lines, if_shrink_c_feature=True, c_thresholds=args.mini_count, if_shrink_w_feature=False)
-        
+
         f_set = {v for v in f_map}
         f_map = utils.shrink_features(f_map, train_features, args.mini_count)
 
@@ -123,16 +124,20 @@ if __name__ == "__main__":
     
     print('constructing dataset')
     # construct dataset
+    print(train_features[0])
+    print(train_labels[0])
+
     dataset, forw_corp, back_corp = utils.construct_bucket_mean_vb_wc(train_features, train_labels, l_map, c_map, f_map, args.caseless)
     dev_dataset, forw_dev, back_dev = utils.construct_bucket_mean_vb_wc(dev_features, dev_labels, l_map, c_map, f_map, args.caseless)
     test_dataset, forw_test, back_test = utils.construct_bucket_mean_vb_wc(test_features, test_labels, l_map, c_map, f_map, args.caseless)
-    
+
     dataset_loader = [torch.utils.data.DataLoader(tup, args.batch_size, shuffle=True, drop_last=False) for tup in dataset]
     dev_dataset_loader = [torch.utils.data.DataLoader(tup, 50, shuffle=False, drop_last=False) for tup in dev_dataset]
     test_dataset_loader = [torch.utils.data.DataLoader(tup, 50, shuffle=False, drop_last=False) for tup in test_dataset]
 
     # build model
     print('building model')
+    elmo = utils.init_elmo()
     ner_model = LM_LSTM_CRF(len(l_map), len(c_map), args.char_dim, args.char_hidden, args.char_layers, args.word_dim, args.word_hidden, args.word_layers, len(f_map), args.drop_out, large_CRF=args.small_crf, if_highway=args.high_way, in_doc_words=in_doc_words, highway_layers = args.highway_layers)
 
     if args.load_check_point:
@@ -180,12 +185,24 @@ if __name__ == "__main__":
 
         epoch_loss = 0
         ner_model.train()
-        for f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v in tqdm(
+        for f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v, origin_w_f in tqdm(
                 itertools.chain.from_iterable(dataset_loader), mininterval=2,
                 desc=' - Tot it %d (epoch %d)' % (tot_length, args.start_epoch), leave=False, file=sys.stdout):
+            # print("size: ", len(origin_w_f))
+            # print("size: ", len(origin_w_f[0]))
+            # print("w_f: ", w_f)
+            # print("len_v: ", len_v)
             f_f, f_p, b_f, b_p, w_f, tg_v, mask_v = packer.repack_vb(f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v)
             ner_model.zero_grad()
-            scores = ner_model(f_f, f_p, b_f, b_p, w_f)
+            # print("f_f", f_f)
+            # print("f_p", f_p)
+            
+            origin_w_f = [[origin_w_f[row][col] for row in range(len(w_f))] for col in range(len(origin_w_f[0]))]
+            elmo_emb = utils.elmo_embedder(elmo, list(filter(lambda a: a != "", origin_w_f)))['elmo_representations'][0].data.permute(1, 0, 2)
+            # print('elmo emb type: ', type(elmo_emb))
+            # print('elmo emb shape: ', elmo_emb.shape)
+           
+            scores = ner_model(f_f, f_p, b_f, b_p, w_f, elmo_emb.cuda())
             loss = crit_ner(scores, tg_v, mask_v)
             epoch_loss += utils.to_scalar(loss)
             if args.co_train:
@@ -209,7 +226,7 @@ if __name__ == "__main__":
         # eval & save check_point
 
         if 'f' in args.eva_matrix:
-            dev_result = evaluator.calc_score(ner_model, dev_dataset_loader)
+            dev_result = evaluator.calc_score(ner_model, dev_dataset_loader, elmo)
             for label, (dev_f1, dev_pre, dev_rec, dev_acc, msg) in dev_result.items():
                 print('DEV : %s : dev_f1: %.4f dev_rec: %.4f dev_pre: %.4f dev_acc: %.4f | %s\n' % (label, dev_f1, dev_rec, dev_pre, dev_acc, msg))
             (dev_f1, dev_pre, dev_rec, dev_acc, msg) = dev_result['total']
@@ -218,7 +235,7 @@ if __name__ == "__main__":
                 patience_count = 0
                 best_f1 = dev_f1
 
-                test_result = evaluator.calc_score(ner_model, test_dataset_loader)
+                test_result = evaluator.calc_score(ner_model, test_dataset_loader, elmo)
                 for label, (test_f1, test_pre, test_rec, test_acc, msg) in test_result.items():
                     print('TEST : %s : test_f1: %.4f test_rec: %.4f test_pre: %.4f test_acc: %.4f | %s\n' % (label, test_f1, test_rec, test_pre, test_acc, msg))
                 (test_f1, test_rec, test_pre, test_acc, msg) = test_result['total']
@@ -262,13 +279,13 @@ if __name__ == "__main__":
 
         else:
 
-            dev_acc = evaluator.calc_score(ner_model, dev_dataset_loader)
+            dev_acc = evaluator.calc_score(ner_model, dev_dataset_loader, elmo)
 
             if dev_acc > best_acc:
                 patience_count = 0
                 best_acc = dev_acc
                 
-                test_acc = evaluator.calc_score(ner_model, test_dataset_loader)
+                test_acc = evaluator.calc_score(ner_model, test_dataset_loader, elmo)
 
                 track_list.append(
                     {'loss': epoch_loss, 'dev_acc': dev_acc, 'test_acc': test_acc})
@@ -318,3 +335,4 @@ if __name__ == "__main__":
     # printing summary
     print('setting:')
     print(args)
+

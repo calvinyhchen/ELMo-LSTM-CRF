@@ -10,6 +10,7 @@ import csv
 import itertools
 from functools import reduce
 
+import time
 import numpy as np
 import shutil
 import torch
@@ -19,6 +20,8 @@ import torch.nn as nn
 import torch.nn.init
 
 from model.ner_dataset import *
+
+from allennlp.modules.elmo import Elmo, batch_to_ids
 
 zip = getattr(itertools, 'izip', zip)
 
@@ -507,30 +510,42 @@ def construct_bucket_mean_vb_wc(word_features, input_label, label_dict, char_dic
     Construct bucket by mean for viterbi decode, word-level and char-level
     """
     # encode and padding
+    origin_word_features = word_features
+
     char_features = encode2char_safe(word_features, char_dict)
+    # print("**********")
+    # print("origin: ", origin_word_features[0])
+    # print("char_fea: ", char_features[0])
     fea_len = [list(map(lambda t: len(t) + 1, f)) for f in char_features]
+    # print("fea_len: ", fea_len[0])
     forw_features = concatChar(char_features, char_dict)
+    # print("forw_features: ", forw_features[0])
 
     labels = encode(input_label, label_dict)
     labels = list(map(lambda t: [label_dict['<start>']] + list(t), labels))
+    # print("labels: ", labels[0])
 
     thresholds = calc_threshold_mean(fea_len)
+    # print("thresholds: ", thresholds)
 
     if caseless:
         word_features = list(map(lambda t: list(map(lambda x: x.lower(), t)), word_features))
     word_features = encode_safe(word_features, word_dict, word_dict['<unk>'])
+    # print("word_fea: ", word_features[0])
 
-    return construct_bucket_vb_wc(word_features, forw_features, fea_len, labels, thresholds, word_dict['<eof>'], char_dict['\n'], label_dict['<pad>'], len(label_dict))
+    return construct_bucket_vb_wc(word_features, forw_features, fea_len, labels, thresholds, word_dict['<eof>'], char_dict['\n'], label_dict['<pad>'], len(label_dict), origin_word_features)
 
-def construct_bucket_vb_wc(word_features, forw_features, fea_len, input_labels, thresholds, pad_word_feature, pad_char_feature, pad_label, label_size):
+def construct_bucket_vb_wc(word_features, forw_features, fea_len, input_labels, thresholds, pad_word_feature, pad_char_feature, pad_label, label_size, origin_word_features):
     """
     Construct bucket by thresholds for viterbi decode, word-level and char-level
     """
     # construct corpus for language model pre-training
     forw_corpus = [pad_char_feature] + list(reduce(lambda x, y: x + [pad_char_feature] + y, forw_features)) + [pad_char_feature]
     back_corpus = forw_corpus[::-1]
+
+    # print("len thresholds: ", len(thresholds))
     # two way construct, first build the bucket, then calculate padding length, then do the padding
-    buckets = [[[], [], [], [], [], [], [], []] for ind in range(len(thresholds))]
+    buckets = [[[], [], [], [], [], [], [], [], []] for ind in range(len(thresholds))]
     # forw, forw_ind, back, back_in, label, mask
     buckets_len = [0 for ind in range(len(thresholds))]
 
@@ -546,15 +561,19 @@ def construct_bucket_vb_wc(word_features, forw_features, fea_len, input_labels, 
             buckets_len[idx] = tmp_concat_len
 
     # calc padding
-    for f_f, f_l, w_f, i_l in zip(forw_features, fea_len, word_features, input_labels):
+    for f_f, f_l, w_f, i_l, origin_w_f in zip(forw_features, fea_len, word_features, input_labels, origin_word_features):
         cur_len = len(f_l)
         idx = 0
         cur_len_1 = cur_len + 1
         while thresholds[idx] < cur_len_1:
             idx += 1
-
+        # print("---padding---")
+        # print("origin_w_f: ", origin_w_f)
         padded_feature = f_f + [pad_char_feature] * (buckets_len[idx] - len(f_f))  # pad feature with <'\n'>, at least one
-
+        # print("len padded_feature: ", len(padded_feature))
+        padded_origin_w_f = origin_w_f + [""] * (buckets_len[idx] - len(origin_w_f))
+        # print("padded_origin_w_f: ", padded_origin_w_f)
+        # print("len padded_origin_w_f: ", len(padded_origin_w_f))
         padded_feature_len = f_l + [1] * (thresholds[idx] - len(f_l)) # pad feature length with <'\n'>, at least one
         padded_feature_len_cum = list(itertools.accumulate(padded_feature_len)) # start from 0, but the first is ' ', so the position need not to be -1
         buckets[idx][0].append(padded_feature) # char
@@ -565,10 +584,13 @@ def construct_bucket_vb_wc(word_features, forw_features, fea_len, input_labels, 
         buckets[idx][5].append([i_l[ind] * label_size + i_l[ind + 1] for ind in range(0, cur_len)] + [i_l[cur_len] * label_size + pad_label] + [pad_label * label_size + pad_label] * (thresholds[idx] - cur_len_1))  # has additional start, label
         buckets[idx][6].append([1] * cur_len_1 + [0] * (thresholds[idx] - cur_len_1))  # has additional start, mask
         buckets[idx][7].append([len(f_f) + thresholds[idx] - len(f_l), cur_len_1])
+        buckets[idx][8].append(padded_origin_w_f)
+        
     bucket_dataset = [CRFDataset_WC(torch.LongTensor(bucket[0]), torch.LongTensor(bucket[1]),
                                     torch.LongTensor(bucket[2]), torch.LongTensor(bucket[3]),
                                     torch.LongTensor(bucket[4]), torch.LongTensor(bucket[5]),
-                                    torch.ByteTensor(bucket[6]), torch.LongTensor(bucket[7])) for bucket in buckets]
+                                    torch.ByteTensor(bucket[6]), torch.LongTensor(bucket[7]), 
+                                    bucket[8]) for bucket in buckets]
     return bucket_dataset, forw_corpus, back_corpus
 
 
@@ -826,3 +848,22 @@ def init_lstm(input_lstm):
             weight = eval('input_lstm.bias_hh_l'+str(ind))
             weight.data.zero_()
             weight.data[input_lstm.hidden_size: 2 * input_lstm.hidden_size] = 1
+
+def init_elmo():
+    """
+    Convert sentence to word embeddings
+    """
+    print("load pretrain files")
+    options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+    weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+    num_of_layers_representation = 1
+
+    return Elmo(options_file, weight_file, num_of_layers_representation, dropout=0)
+
+def elmo_embedder(elmo, sentences):
+    # print("batch_to_ids")
+    character_ids = batch_to_ids(sentences)
+    # print(sentences)
+    # print(character_ids)
+    # print("elmo embedding")
+    return elmo(character_ids)

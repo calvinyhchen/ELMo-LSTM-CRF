@@ -44,6 +44,7 @@ class LM_LSTM_CRF(nn.Module):
         self.word_hidden_dim = word_hidden_dim
         self.word_size = vocab_size
         self.if_highway = if_highway
+        self.elmo_dim = 1024
 
         self.char_embeds = nn.Embedding(char_size, char_dim)
         self.forw_char_lstm = nn.LSTM(char_dim, char_hidden_dim, num_layers=char_rnn_layers, bidirectional=False, dropout=dropout_ratio)
@@ -53,6 +54,8 @@ class LM_LSTM_CRF(nn.Module):
         self.word_embeds = nn.Embedding(vocab_size, embedding_dim)
 
         self.word_lstm = nn.LSTM(embedding_dim + char_hidden_dim * 2, word_hidden_dim // 2, num_layers=word_rnn_layers, bidirectional=True, dropout=dropout_ratio)
+        
+        self.elmo_lstm = nn.LSTM(1024, word_hidden_dim // 2, num_layers=word_rnn_layers, bidirectional=True, dropout=dropout_ratio)
 
         self.word_rnn_layers = word_rnn_layers
 
@@ -194,7 +197,7 @@ class LM_LSTM_CRF(nn.Module):
         pre_score = self.word_pre_train_out(d_char_out)
         return pre_score, hidden
 
-    def forward(self, forw_sentence, forw_position, back_sentence, back_position, word_seq, hidden=None):
+    def forward(self, forw_sentence, forw_position, back_sentence, back_position, word_seq, elmo_emb, hidden=None):
         '''
         args:
             forw_sentence (char_seq_len, batch_size) : char-level representation of sentence
@@ -207,7 +210,6 @@ class LM_LSTM_CRF(nn.Module):
         return:
             crf output (word_seq_len, batch_size, tag_size, tag_size), hidden
         '''
-
         self.set_batch_seq_size(forw_position)
 
         #embedding layer
@@ -239,13 +241,18 @@ class LM_LSTM_CRF(nn.Module):
 
         #word
         word_emb = self.word_embeds(word_seq)
+        # print("word_emb: ", word_emb)
+        # print("word_emb_type: ", type(word_emb))
+        # print("word_emb_size: ", word_emb.data.shape)
         d_word_emb = self.dropout(word_emb)
 
         #combine
         word_input = torch.cat((d_word_emb, d_char_out), dim = 2)
+        # print(word_input.data.shape)
 
         #word level lstm
-        lstm_out, _ = self.word_lstm(word_input)
+        # lstm_out, _ = self.word_lstm(word_input)
+        lstm_out, _ = self.elmo_lstm(elmo_emb)
         d_lstm_out = self.dropout(lstm_out)
 
         #convert to crf

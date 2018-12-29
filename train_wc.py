@@ -188,20 +188,14 @@ if __name__ == "__main__":
         for f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v, origin_w_f in tqdm(
                 itertools.chain.from_iterable(dataset_loader), mininterval=2,
                 desc=' - Tot it %d (epoch %d)' % (tot_length, args.start_epoch), leave=False, file=sys.stdout):
-            # print("size: ", len(origin_w_f))
-            # print("size: ", len(origin_w_f[0]))
-            # print("w_f: ", w_f)
-            # print("len_v: ", len_v)
             f_f, f_p, b_f, b_p, w_f, tg_v, mask_v = packer.repack_vb(f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v)
             ner_model.zero_grad()
-            # print("f_f", f_f)
-            # print("f_p", f_p)
             
             origin_w_f = [[origin_w_f[row][col] for row in range(len(w_f))] for col in range(len(origin_w_f[0]))]
+            # transpose original sentences into (batch_size, len(word))
             elmo_emb = utils.elmo_embedder(elmo, list(filter(lambda a: a != "", origin_w_f)))['elmo_representations'][0].data.permute(1, 0, 2)
-            # print('elmo emb type: ', type(elmo_emb))
-            # print('elmo emb shape: ', elmo_emb.shape)
-           
+            # trim padded words ""
+
             scores = ner_model(f_f, f_p, b_f, b_p, w_f, elmo_emb.cuda())
             loss = crit_ner(scores, tg_v, mask_v)
             epoch_loss += utils.to_scalar(loss)

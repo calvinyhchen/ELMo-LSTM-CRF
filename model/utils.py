@@ -851,7 +851,7 @@ def init_lstm(input_lstm):
 
 def init_elmo():
     """
-    Convert sentence to word embeddings
+    Initial pretrained elmo model
     """
     print("load pretrain files")
     options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
@@ -861,9 +861,20 @@ def init_elmo():
     return Elmo(options_file, weight_file, num_of_layers_representation, dropout=0)
 
 def elmo_embedder(elmo, sentences):
-    # print("batch_to_ids")
-    character_ids = batch_to_ids(sentences)
-    # print(sentences)
-    # print(character_ids)
-    # print("elmo embedding")
+    """
+    Embed input sentences into elmo embedding
+    
+    args:
+        elmo: initiated elmo model
+        sentences: a batch of sentences
+
+    return: 
+        dict with keys:
+            'elmo_representations': List[torch.Tensor]
+    """
+    
+    character_ids = batch_to_ids(sentences) 
+    # Convert a batch of sentences to a tensor representing the sentences 
+    # with encoded chars (len(batch), max sentence length, max word length)
+
     return elmo(character_ids)

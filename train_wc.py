@@ -18,6 +18,7 @@ import sys
 from tqdm import tqdm
 import itertools
 import functools
+import h5py
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -26,9 +27,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Learning with LM-LSTM-CRF together with Language Model')
     parser.add_argument('--rand_embedding', action='store_true', help='random initialize word embedding')
     parser.add_argument('--emb_file', default='./embedding/glove.6B.100d.txt', help='path to pre-trained embedding')
-    parser.add_argument('--train_file', default='./data/ner/eng.train.iobes', help='path to training file')
-    parser.add_argument('--dev_file', default='./data/ner/eng.testa.iobes', help='path to development file')
-    parser.add_argument('--test_file', default='./data/ner/eng.testb.iobes', help='path to test file')
+    parser.add_argument('--train_file', default='./data/CASE-REPORTS-IOBES/train.iobes', help='path to training file')
+    parser.add_argument('--dev_file', default='./data/CASE-REPORTS-IOBES/devel.iobes', help='path to development file')
+    parser.add_argument('--test_file', default='./data/CASE-REPORTS-IOBES/test.iobes', help='path to test file')
     parser.add_argument('--gpu', type=int, default=0, help='gpu id')
     parser.add_argument('--batch_size', type=int, default=10, help='batch_size')
     parser.add_argument('--unk', default='unk', help='unknow-token in pre-trained embedding')
@@ -59,9 +60,12 @@ if __name__ == "__main__":
     parser.add_argument('--high_way', action='store_true', help='use highway layers')
     parser.add_argument('--highway_layers', type=int, default=1, help='number of highway layers')
     parser.add_argument('--eva_matrix', choices=['a', 'fa'], default='fa', help='use f1 and accuracy or accuracy alone')
-    parser.add_argument('--least_iters', type=int, default=50, help='at least train how many epochs before stop')
+    parser.add_argument('--least_iters', type=int, default=100, help='at least train how many epochs before stop')
     parser.add_argument('--shrink_embedding', action='store_true', help='shrink the embedding dictionary to corpus (open this if pre-trained embedding dictionary is too large, but disable this may yield better results on external corpus)')
     parser.add_argument('--elmo_embedding', action='store_true', help='use elmo embedding')
+    parser.add_argument('--elmo_options_file', default='https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json', help='path to elmo options file')
+    parser.add_argument('--elmo_weight_file', default='https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5', help='path to elmo weight file')
+    parser.add_argument('--elmo_dim', type=int, default=1024, help='dimension of elmo embedding')
     args = parser.parse_args()
 
     if args.gpu >= 0:
@@ -69,6 +73,9 @@ if __name__ == "__main__":
 
     print('setting:')
     print(args)
+
+    print("elmo-embedding")
+    elmo = utils.init_elmo(args.elmo_options_file, args.elmo_weight_file)
 
     # load corpus
     print('loading corpus')
@@ -124,8 +131,47 @@ if __name__ == "__main__":
     
     print('constructing dataset')
     # construct dataset
-    print(train_features[0])
-    print(train_labels[0])
+    # train_vectors = []
+    # for train_feature in train_features:
+    #     train_vectors.append(utils.elmo_embedder(elmo, train_feature)['elmo_representations'][0].data)
+    # with open("pretrain_elmo/case_report/train.txt", "w") as train_file:
+    #     print(len(train_features))
+    #     for train_feature in train_features:
+    #         sentence = ""
+    #         for w in train_feature:
+    #             sentence += w + " "
+    #         train_file.write(sentence.rstrip() + "\n")
+
+    # with open("pretrain_elmo/case_report/dev.txt", "w") as dev_file:
+    #     print(len(dev_features))
+    #     for dev_feature in dev_features:
+    #         sentence = ""
+    #         for w in dev_feature:
+    #             sentence += w + " "
+    #         dev_file.write(sentence.rstrip() + "\n")
+
+    # with open("pretrain_elmo/case_report/test.txt", "w") as test_file:
+    #     print(len(test_features))
+    #     for test_feature in test_features:
+    #         sentence = ""
+    #         for w in test_feature:
+    #             sentence += w + " "
+    #         test_file.write(sentence.rstrip() + "\n")
+
+    train_h5py = h5py.File("pretrain_elmo/case_report/train_elmo.hdf5", 'r')
+    train_elmo_embeddings = []
+    for i in range(len(train_features)):
+        train_elmo_embeddings.append(train_h5py.get(str(i))[0])
+
+    dev_h5py = h5py.File("pretrain_elmo/case_report/dev_elmo.hdf5", 'r')
+    dev_elmo_embeddings = []
+    for i in range(len(dev_features)):
+        dev_elmo_embeddings.append(dev_h5py.get(str(i))[0])
+    
+    test_h5py = h5py.File("pretrain_elmo/case_report/test_elmo.hdf5", 'r')
+    test_elmo_embeddings = []
+    for i in range(len(test_features)):
+        test_elmo_embeddings.append(test_h5py.get(str(i))[0])
 
     dataset, forw_corp, back_corp = utils.construct_bucket_mean_vb_wc(train_features, train_labels, l_map, c_map, f_map, args.caseless)
     dev_dataset, forw_dev, back_dev = utils.construct_bucket_mean_vb_wc(dev_features, dev_labels, l_map, c_map, f_map, args.caseless)
@@ -137,8 +183,7 @@ if __name__ == "__main__":
 
     # build model
     print('building model')
-    elmo = utils.init_elmo()
-    ner_model = LM_LSTM_CRF(len(l_map), len(c_map), args.char_dim, args.char_hidden, args.char_layers, args.word_dim, args.word_hidden, args.word_layers, len(f_map), args.drop_out, large_CRF=args.small_crf, if_highway=args.high_way, in_doc_words=in_doc_words, highway_layers = args.highway_layers)
+    ner_model = LM_LSTM_CRF(len(l_map), len(c_map), args.char_dim, args.char_hidden, args.char_layers, args.word_dim, args.word_hidden, args.word_layers, len(f_map), args.drop_out, large_CRF=args.small_crf, if_highway=args.high_way, in_doc_words=in_doc_words, highway_layers = args.highway_layers, elmo_dim = args.elmo_dim)
 
     if args.load_check_point:
         ner_model.load_state_dict(checkpoint_file['state_dict'])
@@ -185,16 +230,29 @@ if __name__ == "__main__":
 
         epoch_loss = 0
         ner_model.train()
-        for f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v, origin_w_f in tqdm(
+        for f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v, origin_w_f, index in tqdm(
                 itertools.chain.from_iterable(dataset_loader), mininterval=2,
                 desc=' - Tot it %d (epoch %d)' % (tot_length, args.start_epoch), leave=False, file=sys.stdout):
             f_f, f_p, b_f, b_p, w_f, tg_v, mask_v = packer.repack_vb(f_f, f_p, b_f, b_p, w_f, tg_v, mask_v, len_v)
             ner_model.zero_grad()
-            
-            origin_w_f = [[origin_w_f[row][col] for row in range(len(w_f))] for col in range(len(origin_w_f[0]))]
+            # origin_w_f = [[origin_w_f[row][col] for row in range(len(w_f))] for col in range(len(origin_w_f[0]))]
             # transpose original sentences into (batch_size, len(word))
-            elmo_emb = utils.elmo_embedder(elmo, list(filter(lambda a: a != "", origin_w_f)))['elmo_representations'][0].data.permute(1, 0, 2)
-            # trim padded words ""
+            # old_elmo_emb = utils.elmo_embedder(elmo, list(filter(lambda a: a != "", origin_w_f)))['elmo_representations'][0].data.permute(1, 0, 2)
+            index = index.data.tolist()
+            elmo_emb = []
+            max_len = 0
+            padded_elmo = []
+            for i in index:
+                elmo_emb.append(train_elmo_embeddings[i])
+                if len(train_elmo_embeddings[i]) > max_len:
+                    max_len = len(train_elmo_embeddings[i])
+            max_len += 1
+            for w in elmo_emb:
+                if len(w) < max_len:
+                    w = np.concatenate((w, [[0.]*1024]*(max_len - len(w))), axis=0)
+                padded_elmo.append(w)
+            elmo_emb = torch.FloatTensor(padded_elmo).data.permute(1, 0, 2)
+
 
             scores = ner_model(f_f, f_p, b_f, b_p, w_f, elmo_emb.cuda())
             loss = crit_ner(scores, tg_v, mask_v)
@@ -220,7 +278,7 @@ if __name__ == "__main__":
         # eval & save check_point
 
         if 'f' in args.eva_matrix:
-            dev_result = evaluator.calc_score(ner_model, dev_dataset_loader, elmo)
+            dev_result = evaluator.calc_score(ner_model, dev_dataset_loader, dev_elmo_embeddings)
             for label, (dev_f1, dev_pre, dev_rec, dev_acc, msg) in dev_result.items():
                 print('DEV : %s : dev_f1: %.4f dev_rec: %.4f dev_pre: %.4f dev_acc: %.4f | %s\n' % (label, dev_f1, dev_rec, dev_pre, dev_acc, msg))
             (dev_f1, dev_pre, dev_rec, dev_acc, msg) = dev_result['total']
@@ -229,7 +287,7 @@ if __name__ == "__main__":
                 patience_count = 0
                 best_f1 = dev_f1
 
-                test_result = evaluator.calc_score(ner_model, test_dataset_loader, elmo)
+                test_result = evaluator.calc_score(ner_model, test_dataset_loader, test_elmo_embeddings)
                 for label, (test_f1, test_pre, test_rec, test_acc, msg) in test_result.items():
                     print('TEST : %s : test_f1: %.4f test_rec: %.4f test_pre: %.4f test_acc: %.4f | %s\n' % (label, test_f1, test_rec, test_pre, test_acc, msg))
                 (test_f1, test_rec, test_pre, test_acc, msg) = test_result['total']

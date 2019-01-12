@@ -42,7 +42,7 @@ class CRFDataset_WC(Dataset):
         mask_tensor (ins_num, seq_length): padding masks
         len_tensor (ins_num, 2): length of chars (dim0) and words (dim1)
     """
-    def __init__(self, forw_tensor, forw_index, back_tensor, back_index, word_tensor, label_tensor, mask_tensor, len_tensor, origin_word):
+    def __init__(self, forw_tensor, forw_index, back_tensor, back_index, word_tensor, label_tensor, mask_tensor, len_tensor, origin_word, idx):
         assert forw_tensor.size(0) == label_tensor.size(0)
         assert forw_tensor.size(0) == mask_tensor.size(0)
         assert forw_tensor.size(0) == forw_index.size(0)
@@ -51,8 +51,7 @@ class CRFDataset_WC(Dataset):
         assert forw_tensor.size(0) == word_tensor.size(0)
         assert forw_tensor.size(0) == len_tensor.size(0)
         assert forw_tensor.size(0) == len(origin_word)
-        # print("---DATASET---")
-        # print(forw_tensor.size(0))
+
         self.forw_tensor = forw_tensor
         self.forw_index = forw_index
         self.back_tensor = back_tensor
@@ -62,14 +61,10 @@ class CRFDataset_WC(Dataset):
         self.mask_tensor = mask_tensor
         self.len_tensor = len_tensor
         self.origin_word = origin_word
-        # print("word_tensor: ", word_tensor[0])
-        # print("label_tensor: ", label_tensor[0])
-        # print("len_tensor: ", len_tensor[0])
-        # print("origin_word: ", origin_word[0])
-        # print(origin_word)
+        self.idx = idx
 
     def __getitem__(self, index):
-        return self.forw_tensor[index], self.forw_index[index], self.back_tensor[index], self.back_index[index], self.word_tensor[index], self.label_tensor[index], self.mask_tensor[index], self.len_tensor[index], self.origin_word[index]
+        return self.forw_tensor[index], self.forw_index[index], self.back_tensor[index], self.back_index[index], self.word_tensor[index], self.label_tensor[index], self.mask_tensor[index], self.len_tensor[index], self.origin_word[index], self.idx[index]
 
     def __len__(self):
         return self.forw_tensor.size(0)

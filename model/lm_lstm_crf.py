@@ -34,7 +34,7 @@ class LM_LSTM_CRF(nn.Module):
         highway_layers: number of highway layers
     """
 
-    def __init__(self, tagset_size, char_size, char_dim, char_hidden_dim, char_rnn_layers, embedding_dim, word_hidden_dim, word_rnn_layers, vocab_size, dropout_ratio, large_CRF=True, if_highway = False, in_doc_words = 2, highway_layers = 1):
+    def __init__(self, tagset_size, char_size, char_dim, char_hidden_dim, char_rnn_layers, embedding_dim, word_hidden_dim, word_rnn_layers, vocab_size, dropout_ratio, large_CRF=True, if_highway = False, in_doc_words = 2, highway_layers = 1, elmo_dim = 1024):
 
         super(LM_LSTM_CRF, self).__init__()
         self.char_dim = char_dim
@@ -44,7 +44,7 @@ class LM_LSTM_CRF(nn.Module):
         self.word_hidden_dim = word_hidden_dim
         self.word_size = vocab_size
         self.if_highway = if_highway
-        self.elmo_dim = 1024
+        self.elmo_dim = elmo_dim
 
         self.char_embeds = nn.Embedding(char_size, char_dim)
         self.forw_char_lstm = nn.LSTM(char_dim, char_hidden_dim, num_layers=char_rnn_layers, bidirectional=False, dropout=dropout_ratio)
@@ -55,7 +55,7 @@ class LM_LSTM_CRF(nn.Module):
 
         self.word_lstm = nn.LSTM(embedding_dim + char_hidden_dim * 2, word_hidden_dim // 2, num_layers=word_rnn_layers, bidirectional=True, dropout=dropout_ratio)
         
-        self.elmo_lstm = nn.LSTM(1024, word_hidden_dim // 2, num_layers=word_rnn_layers, bidirectional=True, dropout=dropout_ratio)
+        self.elmo_lstm = nn.LSTM(elmo_dim, word_hidden_dim // 2, num_layers=word_rnn_layers, bidirectional=True, dropout=dropout_ratio)
 
         self.word_rnn_layers = word_rnn_layers
 
@@ -241,14 +241,10 @@ class LM_LSTM_CRF(nn.Module):
 
         #word
         word_emb = self.word_embeds(word_seq)
-        # print("word_emb: ", word_emb)
-        # print("word_emb_type: ", type(word_emb))
-        # print("word_emb_size: ", word_emb.data.shape)
         d_word_emb = self.dropout(word_emb)
 
         #combine
         word_input = torch.cat((d_word_emb, d_char_out), dim = 2)
-        # print(word_input.data.shape)
 
         #word level lstm
         # lstm_out, _ = self.word_lstm(word_input)

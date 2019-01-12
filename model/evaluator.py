@@ -230,7 +230,7 @@ class eval_wc(eval_batch):
             self.eval_b = self.calc_acc_batch
             self.calc_s = self.acc_score
 
-    def calc_score(self, ner_model, dataset_loader, elmo):
+    def calc_score(self, ner_model, dataset_loader, elmo_embeddings):
         """
         calculate score for pre-selected metrics
 
@@ -241,11 +241,23 @@ class eval_wc(eval_batch):
         ner_model.eval()
         self.reset()
 
-        for f_f, f_p, b_f, b_p, w_f, tg, mask_v, len_v, origin_w_f in itertools.chain.from_iterable(dataset_loader):
+        for f_f, f_p, b_f, b_p, w_f, tg, mask_v, len_v, origin_w_f, index in itertools.chain.from_iterable(dataset_loader):
             f_f, f_p, b_f, b_p, w_f, _, mask_v = self.packer.repack_vb(f_f, f_p, b_f, b_p, w_f, tg, mask_v, len_v)
 
-            origin_w_f = [[origin_w_f[row][col] for row in range(len(w_f))] for col in range(len(origin_w_f[0]))]
-            elmo_emb = utils.elmo_embedder(elmo, list(filter(lambda a: a != "", origin_w_f)))['elmo_representations'][0].data.permute(1, 0, 2)
+            index = index.data.tolist()
+            elmo_emb = []
+            max_len = 0
+            padded_elmo = []
+            for i in index:
+                elmo_emb.append(elmo_embeddings[i])
+                if len(elmo_embeddings[i]) > max_len:
+                    max_len = len(elmo_embeddings[i])
+            max_len += 1
+            for w in elmo_emb:
+                if len(w) < max_len:
+                    w = np.concatenate((w, [[0.]*1024]*(max_len - len(w))), axis=0)
+                padded_elmo.append(w)
+            elmo_emb = torch.FloatTensor(padded_elmo).data.permute(1, 0, 2)
 
             scores = ner_model(f_f, f_p, b_f, b_p, w_f, elmo_emb.cuda())
             decoded = self.decoder.decode(scores.data, mask_v.data)

@@ -130,33 +130,6 @@ if __name__ == "__main__":
                 l_map[label] = len(l_map)
     
     print('constructing dataset')
-    # construct dataset
-    # train_vectors = []
-    # for train_feature in train_features:
-    #     train_vectors.append(utils.elmo_embedder(elmo, train_feature)['elmo_representations'][0].data)
-    # with open("pretrain_elmo/case_report/train.txt", "w") as train_file:
-    #     print(len(train_features))
-    #     for train_feature in train_features:
-    #         sentence = ""
-    #         for w in train_feature:
-    #             sentence += w + " "
-    #         train_file.write(sentence.rstrip() + "\n")
-
-    # with open("pretrain_elmo/case_report/dev.txt", "w") as dev_file:
-    #     print(len(dev_features))
-    #     for dev_feature in dev_features:
-    #         sentence = ""
-    #         for w in dev_feature:
-    #             sentence += w + " "
-    #         dev_file.write(sentence.rstrip() + "\n")
-
-    # with open("pretrain_elmo/case_report/test.txt", "w") as test_file:
-    #     print(len(test_features))
-    #     for test_feature in test_features:
-    #         sentence = ""
-    #         for w in test_feature:
-    #             sentence += w + " "
-    #         test_file.write(sentence.rstrip() + "\n")
 
     train_h5py = h5py.File("pretrain_elmo/case_report/train_elmo.hdf5", 'r')
     train_elmo_embeddings = []
